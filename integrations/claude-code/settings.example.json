@@ -1,0 +1,36 @@
+{
+  "_comment": "Example Claude Code settings.json snippets for AutoFlow Standard integration. Merge into your existing ~/.claude/settings.json.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/check-vault-cwd.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/session-end-vault.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/post-edit-vault-refresh.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

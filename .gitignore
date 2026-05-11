@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local state (recreated on demand)
+*-state/
+*-log.md
+*.tmp
+*.log
+
+# Per-user installation artifacts
+install-log.txt

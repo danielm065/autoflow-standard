@@ -1,0 +1,462 @@
+#!/bin/bash
+#
+# vault — AutoFlow universal CLI
+#
+# Works in: shell, Claude Code (~/.claude/commands/), Codex, Hermes (terminal tool).
+# Master: /Users/danielworkspace/AutoFlow-Vault/
+#
+# Install:
+#   export PATH="/Users/danielworkspace/AutoFlow-Vault/04-OpenClaw/bin:$PATH"
+#   chmod +x /Users/danielworkspace/AutoFlow-Vault/04-OpenClaw/bin/vault
+#
+# Auto-detects active project from CWD (02-Projects/<Name>/...) or VAULT_PROJECT env.
+#
+
+set -euo pipefail
+
+VAULT_ROOT="${AUTOFLOW_VAULT:-$HOME/vault}"
+PROJECTS_DIR="${VAULT_ROOT}/02-Projects"
+INBOX="${VAULT_ROOT}/04-OpenClaw/inbox.md"
+
+REQUIRED_FILES=(CLAUDE VISION CONSTITUTION ONBOARDING SYSTEM RUNBOOK PROCESS-MAP STATUS handoff decisions mistakes)
+
+# Folders under 02-Projects/ that are NOT real projects — skip in `vault verify` / `vault list`
+# (cross-cutting buckets, archive, personal life, legacy)
+SKIP_FOLDERS=(Tasks Meetings Processes Personal-Life _legacy _unassigned _archive)
+
+is_skipped() {
+  local name="$1"
+  for skip in "${SKIP_FOLDERS[@]}"; do
+    [ "$name" = "$skip" ] && return 0
+  done
+  [[ "$name" =~ ^_ ]] && return 0
+  return 1
+}
+
+# ────────────────────────────────────────────────────────────────────
+# helpers
+# ────────────────────────────────────────────────────────────────────
+
+err()  { echo "❌ $*" >&2; }
+ok()   { echo "✅ $*"; }
+warn() { echo "⚠️  $*" >&2; }
+
+detect_project() {
+  if [ -n "${VAULT_PROJECT:-}" ]; then
+    echo "$VAULT_PROJECT"
+    return 0
+  fi
+  case "$PWD" in
+    "${PROJECTS_DIR}"/*)
+      basename "$(echo "$PWD" | sed -E "s|(${PROJECTS_DIR}/[^/]+).*|\1|")"
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+require_project() {
+  local p
+  if ! p=$(detect_project); then
+    err "No active project. cd to 02-Projects/<Name>/ or set VAULT_PROJECT=<Name>."
+    exit 1
+  fi
+  if [ ! -d "${PROJECTS_DIR}/${p}" ]; then
+    err "Project ${p} does not exist at ${PROJECTS_DIR}/${p}"
+    exit 1
+  fi
+  echo "$p"
+}
+
+require_file() {
+  local f="$1"
+  local proj="$2"
+  if [ ! -f "$f" ]; then
+    err "${proj} has no $(basename "$f") (not migrated to AutoFlow Standard)"
+    err "Run: vault verify ${proj}"
+    exit 1
+  fi
+}
+
+# Insert text above the INSERT NEW marker if present, else append to bottom.
+# Uses Python (safer than awk for multi-line entries with quotes/backslashes/etc.)
+insert_or_append() {
+  local file="$1"
+  local entry="$2"
+  python3 - "$file" "$entry" <<'PY'
+import sys, pathlib
+path = pathlib.Path(sys.argv[1])
+entry = sys.argv[2]
+marker = "INSERT NEW "
+content = path.read_text(encoding="utf-8")
+lines = content.split("\n")
+out = []
+inserted = False
+for line in lines:
+    if not inserted and marker in line:
+        out.append(entry.rstrip("\n"))
+        out.append("")
+        inserted = True
+    out.append(line)
+if not inserted:
+    # No marker — append to end
+    if not content.endswith("\n"):
+        out.append("")
+    out.append(entry.rstrip("\n"))
+path.write_text("\n".join(out), encoding="utf-8")
+PY
+  return $?
+}
+
+# ────────────────────────────────────────────────────────────────────
+# commands
+# ────────────────────────────────────────────────────────────────────
+
+cmd_decision() {
+  local proj
+  proj=$(require_project)
+  local file="${PROJECTS_DIR}/${proj}/decisions.md"
+  require_file "$file" "$proj"
+  local text="$*"
+  if [ -z "$text" ]; then
+    err "Usage: vault decision <text>"
+    exit 1
+  fi
+  local stamp
+  stamp=$(date +%Y-%m-%d)
+  local entry="
+## ${stamp}
+- **${text}**
+  - **Why:** TODO — fill within 24h
+  - **Alternatives considered:** TODO
+  - **Outcome (retrospective):** TBD"
+  insert_or_append "$file" "$entry"
+  ok "Decision logged to ${proj}/decisions.md"
+  echo ""
+  echo "═══ Latest entry ═══"
+  echo "$entry"
+}
+
+cmd_mistake() {
+  local proj
+  proj=$(require_project)
+  local file="${PROJECTS_DIR}/${proj}/mistakes.md"
+  require_file "$file" "$proj"
+  local text="$*"
+  if [ -z "$text" ]; then
+    err "Usage: vault mistake <text>"
+    exit 1
+  fi
+  local stamp
+  stamp=$(date +%Y-%m-%d)
+  local entry="
+## ${stamp} — ${text}
+**Tried:** TODO
+**Result:** TODO
+**Why it failed:** TODO
+**Better approach:** TODO
+**Tags:** [TODO]"
+  insert_or_append "$file" "$entry"
+  ok "Mistake logged to ${proj}/mistakes.md"
+  echo ""
+  echo "═══ Latest entry ═══"
+  echo "$entry"
+}
+
+cmd_note() {
+  local text="$*"
+  if [ -z "$text" ]; then
+    err "Usage: vault note <text>"
+    exit 1
+  fi
+  if [ ! -f "$INBOX" ]; then
+    mkdir -p "$(dirname "$INBOX")"
+    {
+      echo "---"
+      echo "type: inbox"
+      echo "purpose: capture random notes/ideas"
+      echo "---"
+      echo ""
+      echo "# 📥 Inbox"
+      echo ""
+      echo "> Quick captures from anywhere (Claude / Hermes / shell). Process weekly."
+      echo ""
+    } > "$INBOX"
+  fi
+  local ts
+  ts=$(date +"%Y-%m-%d %H:%M")
+  echo "- ${ts} — ${text}" >> "$INBOX"
+  ok "Note added to ${INBOX}"
+}
+
+cmd_status() {
+  local proj
+  proj=$(require_project)
+  local file="${PROJECTS_DIR}/${proj}/STATUS.md"
+  require_file "$file" "$proj"
+  cat "$file"
+}
+
+cmd_handoff() {
+  local proj
+  proj=$(require_project)
+  local file="${PROJECTS_DIR}/${proj}/handoff.md"
+  if [ "$#" -gt 0 ] && [ -n "$*" ]; then
+    if [ ! -f "$file" ]; then
+      {
+        echo "---"
+        echo "type: project-handoff"
+        echo "project: ${proj}"
+        echo "---"
+        echo ""
+        echo "# HANDOFF — ${proj}"
+        echo ""
+      } > "$file"
+    fi
+    local ts
+    ts=$(date +"%Y-%m-%d %H:%M")
+    {
+      echo ""
+      echo "## ${ts}"
+      echo "$*"
+    } >> "$file"
+    ok "Handoff updated for ${proj}"
+  else
+    require_file "$file" "$proj"
+    cat "$file"
+  fi
+}
+
+cmd_where_am_i() {
+  local proj
+  proj=$(require_project)
+  local dir="${PROJECTS_DIR}/${proj}"
+
+  echo "📍 Active project: ${proj}"
+  echo "   Path: ${dir}"
+  echo ""
+
+  if [ -f "${dir}/STATUS.md" ]; then
+    echo "═══ STATUS (last 30 lines) ═══"
+    tail -30 "${dir}/STATUS.md"
+  else
+    echo "(no STATUS.md)"
+  fi
+  echo ""
+  if [ -f "${dir}/handoff.md" ]; then
+    echo "═══ HANDOFF ═══"
+    cat "${dir}/handoff.md"
+  else
+    echo "(no handoff.md)"
+  fi
+  echo ""
+  echo "═══ AutoFlow Standard compliance ═══"
+  cmd_verify "$proj"
+}
+
+cmd_refresh() {
+  local proj
+  proj=$(require_project)
+  local dir="${PROJECTS_DIR}/${proj}"
+  local skills_dir="${VAULT_ROOT}/_system/Skills"
+  echo "🔄 Refreshing ${proj}..."
+  echo ""
+
+  # 1. Try arch-refresh skill if present (legacy / external)
+  if command -v vault-arch-refresh >/dev/null 2>&1; then
+    echo "  → arch-refresh (external CLI)"
+    vault-arch-refresh --project "$proj" || warn "arch-refresh failed (non-blocking)"
+  else
+    echo "  → arch-refresh: skill CLI not in PATH (skip — manual via skill)"
+  fi
+
+  # 2. Runbook refresh — Python script
+  local rb_script="${skills_dir}/vault-runbook-refresh/run.py"
+  if [ -f "$dir/RUNBOOK.md" ] && [ -f "$rb_script" ]; then
+    echo "  → vault-runbook-refresh"
+    python3 "$rb_script" --project "$proj" --vault "$VAULT_ROOT" \
+      || warn "runbook-refresh failed (non-blocking)"
+  elif [ ! -f "$dir/RUNBOOK.md" ]; then
+    echo "  → vault-runbook-refresh: no RUNBOOK.md (skip)"
+  else
+    echo "  → vault-runbook-refresh: script missing (skip)"
+  fi
+
+  # 3. Process map — Python script
+  local pm_script="${skills_dir}/vault-process-map/run.py"
+  if [ -f "$dir/PROCESS-MAP.md" ] && [ -f "$pm_script" ]; then
+    echo "  → vault-process-map"
+    python3 "$pm_script" --project "$proj" --vault "$VAULT_ROOT" \
+      || warn "process-map failed (non-blocking)"
+  elif [ ! -f "$dir/PROCESS-MAP.md" ]; then
+    echo "  → vault-process-map: no PROCESS-MAP.md (skip)"
+  else
+    echo "  → vault-process-map: script missing (skip)"
+  fi
+
+  # 4. Anatomy — Python script (per-project file map)
+  local anat_script="${skills_dir}/vault-anatomy-refresh/run.py"
+  if [ -f "$anat_script" ]; then
+    echo "  → vault-anatomy-refresh"
+    python3 "$anat_script" --project "$proj" --vault "$VAULT_ROOT" \
+      || warn "anatomy-refresh failed (non-blocking)"
+  fi
+
+  # 5. Verify compliance
+  echo ""
+  cmd_verify "$proj"
+}
+
+cmd_verify() {
+  local proj="${1:-}"
+
+  check_one() {
+    local p="$1"
+    local d="${PROJECTS_DIR}/${p}"
+    [ -d "$d" ] || return
+    local missing=()
+    local have=0
+    for f in "${REQUIRED_FILES[@]}"; do
+      if [ -f "${d}/${f}.md" ]; then
+        have=$((have+1))
+      else
+        missing+=("$f")
+      fi
+    done
+    if [ "$have" -eq 11 ]; then
+      ok "${p}: 11/11 (full Standard compliance)"
+    elif [ "$have" -eq 0 ]; then
+      echo "⚪ ${p}: 0/11 (empty / not migrated)"
+    else
+      warn "${p}: ${have}/11 — missing: ${missing[*]}"
+    fi
+  }
+
+  if [ -n "$proj" ]; then
+    check_one "$proj"
+  else
+    echo "═══ All projects ═══"
+    for d in "${PROJECTS_DIR}"/*/; do
+      local name
+      name=$(basename "$d")
+      is_skipped "$name" && continue
+      check_one "$name"
+    done
+  fi
+
+  # Secrets leak detection (best-effort)
+  if [ -n "$proj" ] && [ -d "${PROJECTS_DIR}/${proj}" ]; then
+    echo ""
+    echo "═══ Secrets scan (heuristic) ═══"
+    local found=0
+    if grep -rEl "(EAA[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|n8n_api_[A-Za-z0-9]{20,})" "${PROJECTS_DIR}/${proj}" \
+        --include="*.md" 2>/dev/null \
+        | grep -v "secrets/" >/tmp/vault-secrets-scan.$$  || true; then
+      if [ -s /tmp/vault-secrets-scan.$$ ]; then
+        warn "Possible token leak in:"
+        cat /tmp/vault-secrets-scan.$$
+        found=1
+      fi
+    fi
+    rm -f /tmp/vault-secrets-scan.$$
+    [ "$found" -eq 0 ] && ok "No obvious token patterns in .md files"
+  fi
+}
+
+cmd_inbox() {
+  if [ ! -f "$INBOX" ]; then
+    echo "(inbox is empty — no notes captured yet)"
+    return
+  fi
+  cat "$INBOX"
+}
+
+cmd_active() {
+  if [ "$#" -eq 0 ]; then
+    if p=$(detect_project); then
+      echo "$p"
+    else
+      err "No active project (cd to 02-Projects/<Name>/ or VAULT_PROJECT=<Name>)"
+      exit 1
+    fi
+  else
+    # could write to ~/.vault-active or just inform user to export VAULT_PROJECT
+    echo "To set active project for this shell:"
+    echo "  export VAULT_PROJECT=$1"
+  fi
+}
+
+cmd_list() {
+  echo "═══ Projects under 02-Projects/ ═══"
+  for d in "${PROJECTS_DIR}"/*/; do
+    local name
+    name=$(basename "$d")
+    is_skipped "$name" && continue
+    echo "  $name"
+  done
+}
+
+cmd_help() {
+  cat <<'HELP'
+vault — AutoFlow universal CLI
+
+USAGE:
+  vault <command> [args]
+
+PROJECT-LEVEL (auto-detects from CWD or VAULT_PROJECT env):
+  vault decision <text>     — append decision (date-stamped)
+  vault mistake <text>      — append mistake
+  vault status              — print STATUS.md
+  vault handoff [text]      — read handoff or append line
+  vault where-am-i          — STATUS + handoff + compliance
+  vault refresh             — regenerate auto-docs (calls skills)
+
+GLOBAL:
+  vault note <text>         — quick note to 04-OpenClaw/inbox.md
+  vault inbox               — show inbox
+  vault verify [project]    — 11-file compliance + secrets scan
+  vault list                — list all projects
+  vault active              — show active project (or print export hint)
+  vault help                — this message
+
+EXAMPLES:
+  cd 02-Projects/Sela-Tzipori
+  vault decision "Switched from Make to n8n for cost savings"
+  vault note "Idea: weekly digest workflow for clients"
+  vault verify
+
+ENVIRONMENT:
+  AUTOFLOW_VAULT  — vault root (default: /Users/danielworkspace/AutoFlow-Vault)
+  VAULT_PROJECT   — override project detection
+
+INTEGRATION:
+  Claude Code:  ~/.claude/commands/{decision,mistake,note,where-am-i,refresh}.md
+  Hermes:       ~/.hermes/skills/autoflow/vault-cli/ (Discord slash via terminal tool)
+  Codex:        AGENTS.md mentions `vault` CLI — Codex shells out
+HELP
+}
+
+# ────────────────────────────────────────────────────────────────────
+# dispatch
+# ────────────────────────────────────────────────────────────────────
+
+case "${1:-help}" in
+  decision)         shift; cmd_decision "$@" ;;
+  mistake)          shift; cmd_mistake "$@" ;;
+  note)             shift; cmd_note "$@" ;;
+  status)           shift; cmd_status "$@" ;;
+  handoff)          shift; cmd_handoff "$@" ;;
+  where-am-i|where) shift; cmd_where_am_i "$@" ;;
+  refresh)          shift; cmd_refresh "$@" ;;
+  verify)           shift; cmd_verify "$@" ;;
+  inbox)            shift; cmd_inbox "$@" ;;
+  active)           shift; cmd_active "$@" ;;
+  list)             shift; cmd_list "$@" ;;
+  help|-h|--help)   cmd_help ;;
+  *)
+    err "Unknown command: $1"
+    echo ""
+    cmd_help
+    exit 1
+    ;;
+esac

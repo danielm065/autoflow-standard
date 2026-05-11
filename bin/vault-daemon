@@ -1,0 +1,152 @@
+#!/bin/bash
+#
+# vault-daemon — background watcher that auto-refreshes vault docs.
+#
+# Triggered by macOS LaunchAgent every 5 min. Detects file changes since last run
+# and runs the right refresh (process-map / runbook / anatomy) per project.
+#
+# Idempotent + safe — if nothing changed, exits quickly. If everything is fresh
+# (last refresh marker newer than all source files), no-op.
+#
+# Logs activity to: _system/Reports/daemon-log.md (rotated weekly).
+
+set -uo pipefail
+
+VAULT_ROOT="${AUTOFLOW_VAULT:-$HOME/vault}"
+PROJECTS_DIR="${VAULT_ROOT}/02-Projects"
+SKILLS_DIR="${VAULT_ROOT}/_system/Skills"
+STATE_DIR="${VAULT_ROOT}/_system/Reports/daemon-state"
+LOG_FILE="${VAULT_ROOT}/_system/Reports/daemon-log.md"
+
+mkdir -p "$STATE_DIR"
+
+# Lock to prevent concurrent runs
+LOCK_FILE="${STATE_DIR}/.lock"
+if [ -f "$LOCK_FILE" ]; then
+  pid=$(cat "$LOCK_FILE" 2>/dev/null)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    # Another instance running — exit silently
+    exit 0
+  fi
+fi
+echo "$$" > "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
+
+# Skip list — same as vault verify
+SKIP_FOLDERS=(Tasks Meetings Processes Personal-Life _legacy _unassigned _archive)
+is_skipped() {
+  local name="$1"
+  for s in "${SKIP_FOLDERS[@]}"; do [ "$name" = "$s" ] && return 0; done
+  [[ "$name" =~ ^_ ]] && return 0
+  return 1
+}
+
+# Returns 0 if any source file is newer than the marker
+sources_newer_than_marker() {
+  local marker="$1"
+  shift
+  if [ ! -f "$marker" ]; then
+    return 0  # no marker → consider stale
+  fi
+  for src in "$@"; do
+    if [ -e "$src" ] && [ "$src" -nt "$marker" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Find files newer than marker
+sources_changed() {
+  local marker="$1"
+  local pattern="$2"
+  if [ ! -f "$marker" ]; then return 0; fi
+  if find "$pattern" -newer "$marker" 2>/dev/null | head -1 | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+ts=$(date +"%Y-%m-%d %H:%M:%S")
+actions=()
+
+# Walk every project that has at least the AutoFlow Standard files
+for d in "${PROJECTS_DIR}"/*/; do
+  proj=$(basename "$d")
+  is_skipped "$proj" && continue
+  [ ! -f "${d}/CLAUDE.md" ] && continue   # only run on migrated projects
+  [ ! -f "${d}/RUNBOOK.md" ] && continue
+
+  marker_pm="${STATE_DIR}/${proj}.process-map.marker"
+  marker_rb="${STATE_DIR}/${proj}.runbook.marker"
+  marker_an="${STATE_DIR}/${proj}.anatomy.marker"
+
+  # PROCESS-MAP — refresh if any automations or n8n JSON newer
+  pm_dirty=0
+  for sub in automations automation n8n; do
+    if [ -d "${d}${sub}" ]; then
+      if sources_changed "$marker_pm" "${d}${sub}"; then
+        pm_dirty=1; break
+      fi
+    fi
+  done
+  if [ "$pm_dirty" -eq 1 ]; then
+    if python3 "${SKILLS_DIR}/vault-process-map/run.py" --project "$proj" --vault "$VAULT_ROOT" >/dev/null 2>&1; then
+      touch "$marker_pm"
+      actions+=("$proj: process-map refreshed")
+    fi
+  fi
+
+  # RUNBOOK — refresh if issues.md or .wolf/buglog.json newer
+  rb_dirty=0
+  if sources_newer_than_marker "$marker_rb" "${d}issues.md" "${d}.wolf/buglog.json"; then
+    rb_dirty=1
+  fi
+  if [ "$rb_dirty" -eq 1 ]; then
+    if python3 "${SKILLS_DIR}/vault-runbook-refresh/run.py" --project "$proj" --vault "$VAULT_ROOT" >/dev/null 2>&1; then
+      touch "$marker_rb"
+      actions+=("$proj: runbook refreshed")
+    fi
+  fi
+
+  # ANATOMY — refresh if any .md / .json newer than marker
+  an_dirty=0
+  if sources_changed "$marker_an" "${d}"; then
+    an_dirty=1
+  fi
+  if [ "$an_dirty" -eq 1 ]; then
+    if python3 "${SKILLS_DIR}/vault-anatomy-refresh/run.py" --project "$proj" --vault "$VAULT_ROOT" >/dev/null 2>&1; then
+      touch "$marker_an"
+      actions+=("$proj: anatomy refreshed")
+    fi
+  fi
+done
+
+# Log to daemon-log.md (rotation: keep last 200 lines)
+if [ "${#actions[@]}" -gt 0 ]; then
+  if [ ! -f "$LOG_FILE" ]; then
+    {
+      echo "---"
+      echo "type: daemon-log"
+      echo "purpose: vault-daemon activity log"
+      echo "auto_generated: true"
+      echo "---"
+      echo ""
+      echo "# vault-daemon — Activity Log"
+      echo ""
+      echo "> Auto-rotated. Keeps last 200 lines."
+      echo ""
+    } > "$LOG_FILE"
+  fi
+  for a in "${actions[@]}"; do
+    echo "- ${ts} — ${a}" >> "$LOG_FILE"
+  done
+  # Rotate: keep last 200 entry lines + header
+  if [ "$(wc -l <"$LOG_FILE")" -gt 220 ]; then
+    head -10 "$LOG_FILE" > "${LOG_FILE}.tmp"
+    grep "^- 2" "$LOG_FILE" | tail -200 >> "${LOG_FILE}.tmp"
+    mv "${LOG_FILE}.tmp" "$LOG_FILE"
+  fi
+fi
+
+exit 0
