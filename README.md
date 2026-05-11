@@ -169,3 +169,11 @@ MIT — see [LICENSE](LICENSE).
 ## Credits
 
 Created by [Daniel Moshe](https://autoflow.company) (AutoFlow). Inspired by the gaps in OpenWolf, Notion templates, and single-file READMEs.
+
+## For AI agents working in this repo
+
+See [AGENTS.md](AGENTS.md) — canonical instructions for Claude Code, Codex, Cursor, Aider, and any AI agent loading this repository.
+
+## Reference example
+
+[docs/examples/example-project/](docs/examples/example-project/) — a fully filled-out fictional project ("TaskTracker") showing what all 11 files look like when populated. Use this to learn the patterns before scaffolding your own.
