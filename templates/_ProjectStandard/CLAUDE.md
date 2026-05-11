@@ -29,4 +29,4 @@ created: {{date}}
 - Hebrew UI, English code, full absolute paths
 - `decisions.md` + `mistakes.md` = **append-only**
 - Auto-generated (`SYSTEM` partial, `RUNBOOK` partial, `PROCESS-MAP`) — אל תערוך ידנית
-- Master = `/Users/danielworkspace/AutoFlow-Vault/`. Mirror (GoogleDrive) read-only.
+- Master = `$AUTOFLOW_VAULT` (set in shell). Sync mirrors (GoogleDrive/Dropbox/Obsidian Sync) = read-only — do not edit there.
