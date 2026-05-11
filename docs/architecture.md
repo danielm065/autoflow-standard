@@ -52,7 +52,7 @@ Question: "how is it built?"
    11-file: load SYSTEM.md (5KB)   → 10× cheaper
 ```
 
-A mature project (Sela-Tzipori in practice) has 18 files totaling ~700K estimated tokens. Sessions load **5 files = ~15KB**, not all 18. Token-aware loading is the whole point.
+A mature project in practice has 18+ files totaling several hundred K estimated tokens. Sessions load **5 files = ~15KB**, not all 18. Token-aware loading is the whole point.
 
 ### 2. Manual vs Auto separation — prevents drift
 
@@ -115,7 +115,7 @@ WHERE type = "project-vision" AND status = "draft"
 
 In 1 file — Dataview can't query sections within a file. No structured queries.
 
-## Real-world example — Moshe-Asraf-CPA
+## Real-world example — mature CPA office automation project
 
 | File | Size | Why this size |
 |---|---|---|

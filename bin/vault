@@ -3,11 +3,11 @@
 # vault — AutoFlow universal CLI
 #
 # Works in: shell, Claude Code (~/.claude/commands/), Codex, Hermes (terminal tool).
-# Master: /Users/danielworkspace/AutoFlow-Vault/
+# Master: $AUTOFLOW_VAULT (default: $HOME/vault)
 #
 # Install:
-#   export PATH="/Users/danielworkspace/AutoFlow-Vault/04-OpenClaw/bin:$PATH"
-#   chmod +x /Users/danielworkspace/AutoFlow-Vault/04-OpenClaw/bin/vault
+#   export AUTOFLOW_VAULT="$HOME/vault"
+#   export PATH="$AUTOFLOW_VAULT/_system/bin:$PATH"
 #
 # Auto-detects active project from CWD (02-Projects/<Name>/...) or VAULT_PROJECT env.
 #
@@ -16,7 +16,7 @@ set -euo pipefail
 
 VAULT_ROOT="${AUTOFLOW_VAULT:-$HOME/vault}"
 PROJECTS_DIR="${VAULT_ROOT}/02-Projects"
-INBOX="${VAULT_ROOT}/04-OpenClaw/inbox.md"
+INBOX="${VAULT_ROOT}/_system/inbox.md"
 
 REQUIRED_FILES=(CLAUDE VISION CONSTITUTION ONBOARDING SYSTEM RUNBOOK PROCESS-MAP STATUS handoff decisions mistakes)
 
@@ -412,7 +412,7 @@ PROJECT-LEVEL (auto-detects from CWD or VAULT_PROJECT env):
   vault refresh             — regenerate auto-docs (calls skills)
 
 GLOBAL:
-  vault note <text>         — quick note to 04-OpenClaw/inbox.md
+  vault note <text>         — quick note to _system/inbox.md
   vault inbox               — show inbox
   vault verify [project]    — 11-file compliance + secrets scan
   vault list                — list all projects
@@ -420,13 +420,13 @@ GLOBAL:
   vault help                — this message
 
 EXAMPLES:
-  cd 02-Projects/Sela-Tzipori
+  cd 02-Projects/MyProject
   vault decision "Switched from Make to n8n for cost savings"
   vault note "Idea: weekly digest workflow for clients"
   vault verify
 
 ENVIRONMENT:
-  AUTOFLOW_VAULT  — vault root (default: /Users/danielworkspace/AutoFlow-Vault)
+  AUTOFLOW_VAULT  — vault root (default: $HOME/vault)
   VAULT_PROJECT   — override project detection
 
 INTEGRATION:
